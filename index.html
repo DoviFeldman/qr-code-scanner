@@ -5,400 +5,249 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Scanner Lab</title>
 <!--
-  Scanner Lab — a standalone harness to experiment with barcode/QR
-  decoding outside the app, so we can find what reliably reads the hard
-  laser-etched codes before changing the
-  real scanner at 
+  Scanner Lab — compare decoders OUTSIDE the app to find one simple,
+  universal fix for the hard laser-etched tags ( before
+  touching 
+  ENGINES (pick one or "All"):
+    1. ZXing (app)   — the EXACT library the web app uses today:
+                       @zxing/browser BrowserMultiFormatReader + @zxing/library.
+                       Loaded from the same package versions in package.json
+                       (@zxing/browser 0.1.5, @zxing/library 0.21.3).
+    2. Native ML     — the browser BarcodeDetector API (= ML Kit on Android
+                       Chrome). NOT available in iOS Safari / iOS PWA.
+    3. zxing-wasm    — zxing-cpp compiled to WebAssembly. A far stronger
+                       decoder than the old pure-JS ZXing, runs in EVERY
+                       browser incl. iPhone. tryHarder + tryInvert on.
+                       >>> This is the candidate "one universal fix". <<<
 
-  THREE ENGINES you can A/B live:
-    1. ZXing (current app)      — exactly what the web app uses today
-                                   (BrowserMultiFormatReader, no preprocessing).
-    2. Native BarcodeDetector   — the OS decoder. On Android Chrome this is
-                                   Google ML Kit — the same robust engine that
-                                   makes your phone scan instantly. THE likely fix.
-    3. ZXing + preprocessing    — ZXing fed a contrast-boosted / upscaled frame.
-
-  TWO inputs: live camera (needs HTTPS — see README) or a still photo upload
-  (works anywhere, even file://).
+  No preprocessing knobs — per your call, we only test real decoders.
+  Known-good  sample decodes to a string containing .
 -->
 <style>
-  :root {
-    --bg: #0b0e14; --panel: #151a23; --panel2: #1d2430; --border: #2a3340;
-    --text: #e6edf3; --muted: #8b97a7; --accent: #4f8cff; --good: #3fb950;
-    --bad: #f85149; --warn: #d29922;
-  }
-  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-  body {
-    margin: 0; background: var(--bg); color: var(--text);
-    font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    padding: env(safe-area-inset-top) 12px calc(env(safe-area-inset-bottom) + 24px);
-  }
-  h1 { font-size: 18px; margin: 14px 2px 4px; }
-  .sub { color: var(--muted); font-size: 13px; margin: 0 2px 12px; }
-  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 12px; margin-bottom: 12px; }
-  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-  label.field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); flex: 1 1 120px; }
-  select, button, input[type=file]::-webkit-file-upload-button {
-    font: inherit; color: var(--text); background: var(--panel2);
-    border: 1px solid var(--border); border-radius: 10px; padding: 9px 12px;
-  }
-  button { cursor: pointer; }
-  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
-  button.toggle[aria-pressed=true] { background: var(--accent); border-color: var(--accent); color: #fff; }
-  button:disabled { opacity: .4; }
-  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
-  .seg button { border: 0; border-radius: 0; background: var(--panel2); }
-  .seg button[aria-pressed=true] { background: var(--accent); color: #fff; }
-  .videowrap { position: relative; background: #000; border-radius: 14px; overflow: hidden; aspect-ratio: 1; }
-  video, .videowrap canvas { display: block; width: 100%; height: 100%; object-fit: cover; }
-  .reticle { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; }
-  .reticle > div { width: 78%; height: 42%; border: 2px solid rgba(255,255,255,.85); border-radius: 12px; box-shadow: 0 0 0 9999px rgba(0,0,0,.38); }
-  .result { font-size: 14px; word-break: break-all; }
-  .result.hit { color: var(--good); }
-  .result.none { color: var(--muted); }
-  .badge { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); margin-left: 6px; }
-  .badge.good { color: var(--good); border-color: var(--good); }
-  .badge.bad { color: var(--bad); border-color: var(--bad); }
-  .log { font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); max-height: 160px; overflow: auto; white-space: pre-wrap; }
-  .slider { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--muted); }
-  input[type=range] { width: 100%; }
-  .pp { display: none; }
-  .pp.show { display: block; }
-  .hint { font-size: 12px; color: var(--warn); margin-top: 8px; }
-  .ok { color: var(--good); } .err { color: var(--bad); } .mut { color: var(--muted); }
-  details summary { cursor: pointer; color: var(--muted); font-size: 13px; }
-  .preview { width: 100%; border-radius: 10px; border: 1px solid var(--border); margin-top: 8px; display: none; }
-  .preview.show { display: block; }
+  :root{--bg:#0b0e14;--panel:#151a23;--panel2:#1d2430;--border:#2a3340;--text:#e6edf3;--muted:#8b97a7;--accent:#4f8cff;--good:#3fb950;--bad:#f85149;--warn:#d29922}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:env(safe-area-inset-top) 12px calc(env(safe-area-inset-bottom) + 24px)}
+  h1{font-size:18px;margin:14px 2px 4px}
+  .sub{color:var(--muted);font-size:13px;margin:0 2px 12px}
+  code{background:var(--panel2);padding:1px 5px;border-radius:5px;font-size:12px}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:12px;margin-bottom:12px}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  label.field{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted)}
+  select,button{font:inherit;color:var(--text);background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:9px 12px;cursor:pointer}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+  button.toggle[aria-pressed=true]{background:var(--accent);border-color:var(--accent);color:#fff}
+  button:disabled{opacity:.4}
+  .seg{display:inline-flex;border:1px solid var(--border);border-radius:10px;overflow:hidden;flex-wrap:wrap}
+  .seg button{border:0;border-radius:0;background:var(--panel2)}
+  .seg button[aria-pressed=true]{background:var(--accent);color:#fff}
+  .videowrap{position:relative;background:#000;border-radius:14px;overflow:hidden;aspect-ratio:1}
+  video{display:block;width:100%;height:100%;object-fit:cover}
+  .reticle{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
+  .reticle>div{width:78%;height:42%;border:2px solid rgba(255,255,255,.85);border-radius:12px;box-shadow:0 0 0 9999px rgba(0,0,0,.38)}
+  .result{font-size:14px;word-break:break-all}
+  .result.hit{color:var(--good)} .result.none{color:var(--muted)}
+  .badge{display:inline-block;font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--border);color:var(--muted);margin-left:6px}
+  .badge.good{color:var(--good);border-color:var(--good)}
+  .log{font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted);max-height:170px;overflow:auto;white-space:pre-wrap;margin-top:8px}
+  .hint{font-size:12px;color:var(--warn);margin-top:8px}
+  .ok{color:var(--good)} .err{color:var(--bad)} .mut{color:var(--muted)}
+  .preview{width:100%;border-radius:10px;border:1px solid var(--border);margin-top:8px;display:none}
+  .preview.show{display:block}
+  .status{font-size:11px;color:var(--muted);margin-left:6px}
 </style>
 </head>
 <body>
   <h1>Scanner Lab</h1>
-  <p class="sub">A/B the app's decoder against candidate fixes. Known-good sample decodes to <code>…id=154264656…</code></p>
+  <p class="sub">Find one universal decoder fix. <code>ZXing (app)</code> = exactly what the app uses now. Sample should read <code>id=171338987</code>.</p>
 
   <div class="card">
-    <div class="row" style="margin-bottom:10px">
-      <div class="seg" id="engineSeg" role="group" aria-label="Engine">
-        <button data-engine="all" aria-pressed="true">All engines</button>
-        <button data-engine="zxing" aria-pressed="false">ZXing (app)</button>
-        <button data-engine="native" aria-pressed="false">Native ML</button>
-        <button data-engine="zxingpp" aria-pressed="false">ZXing+pre</button>
-      </div>
+    <div class="seg" id="engineSeg" role="group" aria-label="Engine" style="margin-bottom:10px">
+      <button data-engine="all" aria-pressed="true">All</button>
+      <button data-engine="zxing" aria-pressed="false">ZXing (app)</button>
+      <button data-engine="native" aria-pressed="false">Native ML</button>
+      <button data-engine="wasm" aria-pressed="false">zxing-wasm</button>
     </div>
+    <div id="engineStatus" class="status"></div>
 
-    <div class="videowrap">
-      <video id="video" playsinline muted></video>
-      <div class="reticle"><div></div></div>
-    </div>
+    <div class="videowrap"><video id="video" playsinline muted></video><div class="reticle"><div></div></div></div>
 
     <div class="row" style="margin-top:10px">
       <button id="startBtn" class="primary">Start camera</button>
       <button id="stopBtn" disabled>Stop</button>
       <button id="torchBtn" class="toggle" aria-pressed="false" disabled>🔦 Torch</button>
       <button id="flipBtn" disabled>↺ Flip</button>
-      <label class="field" style="flex:0 0 110px">Zoom
-        <input id="zoom" type="range" min="1" max="5" step="0.1" value="1" disabled />
-      </label>
+      <label class="field" style="flex:0 0 120px">Zoom <input id="zoom" type="range" min="1" max="5" step="0.1" value="1" disabled /></label>
     </div>
-
     <div class="hint" id="secureHint" style="display:none"></div>
   </div>
 
   <div class="card">
-    <div class="row" style="justify-content:space-between">
-      <strong>Result</strong>
-      <button id="clearLog" class="mut" style="font-size:12px;padding:4px 8px">clear log</button>
-    </div>
+    <div class="row" style="justify-content:space-between"><strong>Result</strong><button id="clearLog" class="mut" style="font-size:12px;padding:4px 8px">clear log</button></div>
     <div id="result" class="result none">— no scan yet —</div>
     <div class="log" id="log"></div>
   </div>
 
   <div class="card">
-    <details>
-      <summary>Preprocessing controls (applies to “ZXing+pre” and uploaded photos)</summary>
-      <div class="pp show" style="margin-top:10px">
-        <div class="row">
-          <button id="ppGray" class="toggle" aria-pressed="true">Grayscale</button>
-          <button id="ppInvert" class="toggle" aria-pressed="false">Invert</button>
-          <button id="ppThresh" class="toggle" aria-pressed="false">Binarize</button>
-        </div>
-        <div class="row" style="margin-top:10px">
-          <div class="slider" style="flex:1">Contrast <span id="contrastV">1.8×</span>
-            <input id="contrast" type="range" min="1" max="4" step="0.1" value="1.8" />
-          </div>
-          <div class="slider" style="flex:1">Brightness <span id="brightV">0</span>
-            <input id="bright" type="range" min="-80" max="80" step="1" value="0" />
-          </div>
-        </div>
-        <div class="row" style="margin-top:10px">
-          <div class="slider" style="flex:1">Upscale <span id="scaleV">2×</span>
-            <input id="scale" type="range" min="1" max="4" step="0.5" value="2" />
-          </div>
-          <div class="slider" style="flex:1">Threshold <span id="threshV">128</span>
-            <input id="threshLvl" type="range" min="60" max="200" step="1" value="128" />
-          </div>
-        </div>
-      </div>
-    </details>
-  </div>
-
-  <div class="card">
     <strong>Test a still photo</strong>
-    <p class="sub" style="margin:6px 0 10px">Works even when opened from a file (no camera/HTTPS needed). Take a photo of the tag, then decode it with every engine.</p>
+    <p class="sub" style="margin:6px 0 10px">Works even when opened from a file (no camera/HTTPS needed). Decodes with all three engines side by side.</p>
     <input id="file" type="file" accept="image/*" />
-    <img id="preview" class="preview" alt="uploaded preview" />
+    <img id="preview" class="preview" alt="preview" />
     <div id="fileResult" class="result none" style="margin-top:10px">— no photo decoded —</div>
   </div>
 
+<!-- The EXACT libraries the app depends on (same versions as apps/web/package.json) -->
 <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/umd/zxing-browser.min.js"></script>
 <script>
 (() => {
-  // ---- element refs ----
   const $ = (id) => document.getElementById(id);
   const video = $('video'), resultEl = $('result'), logEl = $('log');
-  let engine = 'all';
-  let stream = null, track = null, loopId = null, zxingReader = null;
-  let facing = 'environment';
+  let engine = 'all', stream = null, track = null, loopId = null, facing = 'environment';
+  let zxingReader = null, nativeDetector = null, wasmRead = null;
+  const nativeSupported = ('BarcodeDetector' in window);
 
-  // ---- logging ----
-  function log(msg) {
-    const t = new Date().toLocaleTimeString();
-    logEl.textContent = `[${t}] ${msg}\n` + logEl.textContent;
-  }
-  function setResult(el, text, cls, badges) {
-    el.className = 'result ' + cls;
-    el.innerHTML = text + (badges || '');
-  }
+  const log = (m) => { logEl.textContent = `[${new Date().toLocaleTimeString()}] ${m}\n` + logEl.textContent; };
+  const setResult = (el, t, cls, b) => { el.className = 'result ' + cls; el.innerHTML = t + (b || ''); };
 
-  // ---- engine selector ----
-  $('engineSeg').addEventListener('click', (e) => {
-    const b = e.target.closest('button[data-engine]'); if (!b) return;
-    engine = b.dataset.engine;
-    [...$('engineSeg').children].forEach(c => c.setAttribute('aria-pressed', String(c === b)));
-    log('engine → ' + engine);
-  });
-
-  // ---- preprocessing toggles/sliders ----
-  const toggles = ['ppGray','ppInvert','ppThresh'];
-  toggles.forEach(id => $(id).addEventListener('click', () => {
-    const b = $(id); b.setAttribute('aria-pressed', b.getAttribute('aria-pressed') === 'true' ? 'false' : 'true');
-  }));
-  const bind = (id, span, fmt) => { const f = () => $(span).textContent = fmt($(id).value); $(id).addEventListener('input', f); f(); };
-  bind('contrast','contrastV', v => (+v).toFixed(1)+'×');
-  bind('bright','brightV', v => v);
-  bind('scale','scaleV', v => (+v)+'×');
-  bind('threshLvl','threshV', v => v);
-
-  const ppCanvas = document.createElement('canvas');
-  const ppCtx = ppCanvas.getContext('2d', { willReadFrequently: true });
-
-  // Draw a source (video/image) into ppCanvas applying the current pipeline.
-  function preprocess(src, sw, sh) {
-    const scale = parseFloat($('scale').value);
-    const w = Math.round(sw * scale), h = Math.round(sh * scale);
-    ppCanvas.width = w; ppCanvas.height = h;
-    ppCtx.drawImage(src, 0, 0, w, h);
-    const gray = $('ppGray').getAttribute('aria-pressed') === 'true';
-    const invert = $('ppInvert').getAttribute('aria-pressed') === 'true';
-    const thresh = $('ppThresh').getAttribute('aria-pressed') === 'true';
-    const contrast = parseFloat($('contrast').value);
-    const bright = parseInt($('bright').value, 10);
-    const tlvl = parseInt($('threshLvl').value, 10);
-    if (gray || invert || thresh || contrast !== 1 || bright !== 0) {
-      const img = ppCtx.getImageData(0, 0, w, h);
-      const d = img.data;
-      for (let i = 0; i < d.length; i += 4) {
-        let r = d[i], g = d[i+1], b = d[i+2];
-        if (gray || thresh) { const y = 0.299*r + 0.587*g + 0.114*b; r = g = b = y; }
-        // contrast around midpoint, then brightness
-        r = (r - 128) * contrast + 128 + bright;
-        g = (g - 128) * contrast + 128 + bright;
-        b = (b - 128) * contrast + 128 + bright;
-        if (thresh) { const v = r < tlvl ? 0 : 255; r = g = b = v; }
-        if (invert) { r = 255 - r; g = 255 - g; b = 255 - b; }
-        d[i] = r; d[i+1] = g; d[i+2] = b;
-      }
-      ppCtx.putImageData(img, 0, 0);
-    }
-    return ppCanvas;
+  // ---------- engine availability banner ----------
+  function refreshStatus() {
+    const z = (window.ZXingBrowser && window.ZXingBrowser.BrowserMultiFormatReader) ? 'ZXing✅' : 'ZXing❌(CDN?)';
+    const n = nativeSupported ? 'NativeML✅' : 'NativeML❌(iOS/Firefox)';
+    const w = wasmRead ? 'wasm✅' : 'wasm⏳(loads on first use)';
+    $('engineStatus').textContent = `${z}  ·  ${n}  ·  ${w}`;
   }
 
-  // ---- engines ----
-  // Native BarcodeDetector (OS / ML Kit on Android). Lazy-checked.
-  let nativeDetector = null, nativeSupported = ('BarcodeDetector' in window);
-  async function getNativeDetector() {
-    if (nativeDetector) return nativeDetector;
-    nativeDetector = new BarcodeDetector(); // all supported formats
-    return nativeDetector;
-  }
-  async function tryNative(source) {
-    if (!nativeSupported) return null;
-    const det = await getNativeDetector();
-    const codes = await det.detect(source);
-    if (codes && codes.length) return { value: codes[0].rawValue, fmt: codes[0].format };
-    return null;
-  }
-
-  // ZXing decode from a canvas (one-shot).
-  function tryZXingCanvas(canvas) {
-    try {
-      const res = zxingReader.decodeFromCanvas(canvas);
-      if (res && res.getText) return { value: res.getText(), fmt: 'zxing' };
-    } catch (_) { /* NotFoundException etc. */ }
-    return null;
-  }
-
+  // ---------- ZXing (the app's exact reader) ----------
   function ensureZXing() {
-    if (!zxingReader) {
-      if (!window.ZXing || !window.ZXing.BrowserMultiFormatReader) throw new Error('ZXing failed to load (offline?)');
-      zxingReader = new window.ZXing.BrowserMultiFormatReader();
-    }
+    if (zxingReader) return zxingReader;
+    const ZB = window.ZXingBrowser;
+    if (!ZB || !ZB.BrowserMultiFormatReader) throw new Error('ZXing (@zxing/browser) failed to load from CDN');
+    zxingReader = new ZB.BrowserMultiFormatReader(); // identical to barcode-scanner.tsx (no hints)
     return zxingReader;
   }
-
-  // grab a plain (un-processed) frame canvas from the video
-  const rawCanvas = document.createElement('canvas');
-  const rawCtx = rawCanvas.getContext('2d', { willReadFrequently: true });
-  function rawFrame() {
-    const w = video.videoWidth, h = video.videoHeight;
-    if (!w || !h) return null;
-    rawCanvas.width = w; rawCanvas.height = h;
-    rawCtx.drawImage(video, 0, 0, w, h);
-    return rawCanvas;
+  function tryZXing(canvas) {
+    try { const r = ensureZXing().decodeFromCanvas(canvas); if (r && r.getText) return { value: r.getText(), fmt: 'zxing' }; }
+    catch (_) {} // NotFoundException while nothing is in view
+    return null;
   }
 
-  // Run the selected engine(s) against the current video frame.
-  async function scanFrame() {
-    ensureZXing();
-    const raw = rawFrame();
-    if (!raw) return;
-    const want = (e) => engine === 'all' || engine === e;
-    let hit = null, winner = '';
+  // ---------- Native BarcodeDetector (ML Kit on Android) ----------
+  async function tryNative(source) {
+    if (!nativeSupported) return null;
+    if (!nativeDetector) nativeDetector = new BarcodeDetector();
+    const codes = await nativeDetector.detect(source);
+    return (codes && codes.length) ? { value: codes[0].rawValue, fmt: codes[0].format } : null;
+  }
 
-    if (!hit && want('zxing'))   { const r = tryZXingCanvas(raw); if (r) { hit = r; winner = 'ZXing (app, raw)'; } }
-    if (!hit && want('native'))  { try { const r = await tryNative(raw); if (r) { hit = r; winner = 'Native ML'; } } catch (_) {} }
-    if (!hit && want('zxingpp')) { const pc = preprocess(video, video.videoWidth, video.videoHeight); const r = tryZXingCanvas(pc); if (r) { hit = r; winner = 'ZXing + preprocessing'; } }
-
-    if (hit) {
-      setResult(resultEl, hit.value, 'hit', `<span class="badge good">${winner}</span>`);
-      log(`HIT via ${winner}: ${hit.value}`);
-      navigator.vibrate && navigator.vibrate(120);
+  // ---------- zxing-wasm (zxing-cpp) — the universal candidate ----------
+  let wasmLoading = null;
+  async function ensureWasm() {
+    if (wasmRead) return wasmRead;
+    if (!wasmLoading) {
+      wasmLoading = (async () => {
+        log('loading zxing-wasm…');
+        const mod = await import('https://esm.sh/zxing-wasm@2.2.4/reader');
+        // Pin the .wasm binary so it loads reliably from the CDN.
+        if (mod.prepareZXingModule) {
+          mod.prepareZXingModule({
+            overrides: { locateFile: (p, prefix) => p.endsWith('.wasm')
+              ? 'https://cdn.jsdelivr.net/npm/zxing-wasm@2.2.4/dist/reader/zxing_reader.wasm' : prefix + p },
+            fireImmediately: true,
+          });
+        }
+        wasmRead = mod.readBarcodes;
+        log('zxing-wasm ready ✅'); refreshStatus();
+        return wasmRead;
+      })().catch((e) => { log('zxing-wasm load failed: ' + e.message); throw e; });
     }
+    return wasmLoading;
+  }
+  async function tryWasm(imageData) {
+    const read = await ensureWasm();
+    const res = await read(imageData, { tryHarder: true, tryInvert: true, tryRotate: true, maxNumberOfSymbols: 1 });
+    return (res && res.length && res[0].text) ? { value: res[0].text, fmt: res[0].format } : null;
   }
 
-  function loop() {
-    if (!stream) return;
-    scanFrame().finally(() => { loopId = setTimeout(loop, 180); });
+  // ---------- shared frame grabber ----------
+  const cvs = document.createElement('canvas'), ctx = cvs.getContext('2d', { willReadFrequently: true });
+  function grab(src, w, h) { cvs.width = w; cvs.height = h; ctx.drawImage(src, 0, 0, w, h); return cvs; }
+
+  // ---------- live loop ----------
+  async function scanFrame() {
+    const w = video.videoWidth, h = video.videoHeight; if (!w || !h) return;
+    const canvas = grab(video, w, h);
+    const want = (e) => engine === 'all' || engine === e;
+    let hit = null, who = '';
+    if (!hit && want('zxing'))  { const r = tryZXing(canvas); if (r) { hit = r; who = 'ZXing (app)'; } }
+    if (!hit && want('native')) { try { const r = await tryNative(canvas); if (r) { hit = r; who = 'Native ML'; } } catch(_){} }
+    if (!hit && want('wasm'))   { try { const r = await tryWasm(ctx.getImageData(0,0,w,h)); if (r) { hit = r; who = 'zxing-wasm'; } } catch(_){} }
+    if (hit) { setResult(resultEl, hit.value, 'hit', `<span class="badge good">${who}</span>`); log(`HIT via ${who}: ${hit.value}`); navigator.vibrate && navigator.vibrate(120); }
   }
+  function loop() { if (!stream) return; scanFrame().finally(() => { loopId = setTimeout(loop, 200); }); }
 
-  // ---- camera control ----
-  function isSecure() { return window.isSecureContext; }
-
+  // ---------- camera ----------
   async function start() {
-    if (!isSecure()) {
-      const hint = $('secureHint'); hint.style.display = 'block';
-      hint.innerHTML = '⚠️ Camera needs a secure context (HTTPS or localhost). You opened this over <code>'+location.protocol+'</code>, so the browser will block the camera. Use the <b>still-photo</b> box below, or host this file on GitHub Pages — see the README.';
+    if (!window.isSecureContext) {
+      const h = $('secureHint'); h.style.display = 'block';
+      h.innerHTML = '⚠️ Camera needs HTTPS/localhost. You opened over <code>'+location.protocol+'</code> so the camera is blocked. Use the still-photo box below, or host on GitHub Pages (see README).';
     }
     try {
       ensureZXing();
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: facing }, width: { ideal: 1920 }, height: { ideal: 1920 } },
-        audio: false
-      });
-      video.srcObject = stream;
-      await video.play();
-      track = stream.getVideoTracks()[0];
-      log('camera started: ' + (track.label || 'video'));
-      setupTrackControls();
-      $('startBtn').disabled = true; $('stopBtn').disabled = false;
-      $('flipBtn').disabled = false;
+      if (engine === 'all' || engine === 'wasm') ensureWasm().catch(()=>{});
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: facing }, width: { ideal: 1920 }, height: { ideal: 1920 } }, audio: false });
+      video.srcObject = stream; await video.play();
+      track = stream.getVideoTracks()[0]; log('camera: ' + (track.label || 'video'));
+      const caps = track.getCapabilities ? track.getCapabilities() : {};
+      $('torchBtn').disabled = !caps.torch;
+      if (caps.zoom) { const z=$('zoom'); z.disabled=false; z.min=caps.zoom.min; z.max=caps.zoom.max; z.step=caps.zoom.step||0.1; z.value=(track.getSettings().zoom)||caps.zoom.min; } else $('zoom').disabled = true;
+      $('startBtn').disabled = true; $('stopBtn').disabled = false; $('flipBtn').disabled = false;
       loop();
-    } catch (e) {
-      log('camera error: ' + e.message);
-      setResult(resultEl, 'Camera error: ' + e.message, 'none', '');
-    }
+    } catch (e) { log('camera error: ' + e.message); setResult(resultEl, 'Camera error: ' + e.message, 'none', ''); }
   }
-
-  function setupTrackControls() {
-    const caps = track.getCapabilities ? track.getCapabilities() : {};
-    // torch
-    if (caps.torch) { $('torchBtn').disabled = false; }
-    else { $('torchBtn').disabled = true; }
-    // zoom
-    if (caps.zoom) {
-      const z = $('zoom'); z.disabled = false;
-      z.min = caps.zoom.min; z.max = caps.zoom.max; z.step = caps.zoom.step || 0.1;
-      z.value = track.getSettings().zoom || caps.zoom.min;
-    } else { $('zoom').disabled = true; }
-  }
-
-  $('torchBtn').addEventListener('click', async () => {
-    if (!track) return;
-    const b = $('torchBtn'); const on = b.getAttribute('aria-pressed') !== 'true';
-    try { await track.applyConstraints({ advanced: [{ torch: on }] }); b.setAttribute('aria-pressed', String(on)); log('torch ' + (on ? 'on' : 'off')); }
-    catch (e) { log('torch failed: ' + e.message); }
-  });
-  $('zoom').addEventListener('input', async () => {
-    if (!track) return;
-    try { await track.applyConstraints({ advanced: [{ zoom: parseFloat($('zoom').value) }] }); } catch (_) {}
-  });
-  $('flipBtn').addEventListener('click', async () => {
-    facing = facing === 'environment' ? 'user' : 'environment';
-    stop(); await start();
-  });
-
   function stop() {
-    if (loopId) clearTimeout(loopId), loopId = null;
-    if (stream) stream.getTracks().forEach(t => t.stop()), stream = null;
+    if (loopId) { clearTimeout(loopId); loopId = null; }
+    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
     track = null; video.srcObject = null;
-    $('startBtn').disabled = false; $('stopBtn').disabled = true;
-    $('torchBtn').disabled = true; $('zoom').disabled = true; $('flipBtn').disabled = true;
-    $('torchBtn').setAttribute('aria-pressed', 'false');
-    log('camera stopped');
+    ['stopBtn','torchBtn','flipBtn'].forEach(id=>$(id).disabled=true); $('zoom').disabled=true;
+    $('startBtn').disabled=false; $('torchBtn').setAttribute('aria-pressed','false'); log('stopped');
   }
-
+  $('torchBtn').addEventListener('click', async () => {
+    if (!track) return; const b=$('torchBtn'); const on=b.getAttribute('aria-pressed')!=='true';
+    try { await track.applyConstraints({ advanced:[{torch:on}] }); b.setAttribute('aria-pressed',String(on)); log('torch '+(on?'on':'off')); } catch(e){ log('torch failed: '+e.message); }
+  });
+  $('zoom').addEventListener('input', async () => { if (track) try { await track.applyConstraints({ advanced:[{zoom:parseFloat($('zoom').value)}] }); } catch(_){} });
+  $('flipBtn').addEventListener('click', async () => { facing = facing==='environment'?'user':'environment'; stop(); await start(); });
   $('startBtn').addEventListener('click', start);
   $('stopBtn').addEventListener('click', stop);
-  $('clearLog').addEventListener('click', () => logEl.textContent = '');
+  $('clearLog').addEventListener('click', () => logEl.textContent='');
+  $('engineSeg').addEventListener('click', (e) => { const b=e.target.closest('button[data-engine]'); if(!b) return; engine=b.dataset.engine; [...$('engineSeg').children].forEach(c=>c.setAttribute('aria-pressed',String(c===b))); log('engine → '+engine); if (engine==='wasm'||engine==='all') ensureWasm().catch(()=>{}); });
 
-  // ---- still photo path (works over file://) ----
+  // ---------- still photo (all engines) ----------
   $('file').addEventListener('change', async (e) => {
     const f = e.target.files[0]; if (!f) return;
-    const url = URL.createObjectURL(f);
-    const img = new Image();
+    const url = URL.createObjectURL(f), img = new Image();
     img.onload = async () => {
       $('preview').src = url; $('preview').classList.add('show');
-      ensureZXing();
-      const out = $('fileResult');
-      const lines = [];
-      // 1. ZXing raw
-      rawCanvas.width = img.naturalWidth; rawCanvas.height = img.naturalHeight;
-      rawCtx.drawImage(img, 0, 0);
-      let r = tryZXingCanvas(rawCanvas);
-      lines.push('ZXing (app, raw): ' + (r ? '✅ ' + r.value : '❌ no read'));
-      // 2. Native
-      if (nativeSupported) {
-        try { const n = await tryNative(img); lines.push('Native ML: ' + (n ? '✅ ' + n.value : '❌ no read')); }
-        catch (err) { lines.push('Native ML: error ' + err.message); }
-      } else { lines.push('Native ML: (not supported in this browser)'); }
-      // 3. ZXing + preprocessing
-      const pc = preprocess(img, img.naturalWidth, img.naturalHeight);
-      let rp = tryZXingCanvas(pc);
-      lines.push('ZXing + preprocessing: ' + (rp ? '✅ ' + rp.value : '❌ no read'));
-      const anyHit = r || rp;
-      const text = lines.map(l => l.includes('✅') ? `<span class="ok">${l}</span>` : (l.includes('❌') ? `<span class="err">${l}</span>` : `<span class="mut">${l}</span>`)).join('<br>');
-      out.className = 'result ' + (anyHit ? 'hit' : 'none');
-      out.innerHTML = text;
-      log('photo decoded — see still-photo box');
+      const out = $('fileResult'), lines = [];
+      const c = grab(img, img.naturalWidth, img.naturalHeight);
+      const rz = tryZXing(c); lines.push('ZXing (app): ' + (rz ? '✅ '+rz.value : '❌ no read'));
+      if (nativeSupported) { try { const rn = await tryNative(img); lines.push('Native ML: ' + (rn ? '✅ '+rn.value : '❌ no read')); } catch(err){ lines.push('Native ML: error '+err.message); } }
+      else lines.push('Native ML: (not supported in this browser)');
+      try { const rw = await tryWasm(ctx.getImageData(0,0,c.width,c.height)); lines.push('zxing-wasm: ' + (rw ? '✅ '+rw.value : '❌ no read')); }
+      catch(err){ lines.push('zxing-wasm: error '+err.message); }
+      const anyHit = lines.some(l=>l.includes('✅'));
+      out.className = 'result ' + (anyHit?'hit':'none');
+      out.innerHTML = lines.map(l=> l.includes('✅')?`<span class="ok">${l}</span>`:(l.includes('❌')?`<span class="err">${l}</span>`:`<span class="mut">${l}</span>`)).join('<br>');
+      log('photo decoded — see box');
     };
     img.src = url;
   });
 
-  // ---- boot ----
-  log('native BarcodeDetector: ' + (nativeSupported ? 'supported ✅' : 'NOT supported ❌'));
-  if (!isSecure()) {
-    $('secureHint').style.display = 'block';
-    $('secureHint').innerHTML = 'ℹ️ Not a secure context (' + location.protocol + '). Live camera will be blocked — use the still-photo box, or host on HTTPS. See README.';
-  }
+  // ---------- boot ----------
+  try { ensureZXing(); log('ZXing (@zxing/browser) loaded ✅'); } catch (e) { log(e.message); }
+  log('Native BarcodeDetector: ' + (nativeSupported ? 'supported ✅' : 'NOT supported ❌ (iOS/Firefox)'));
+  refreshStatus();
+  if (!window.isSecureContext) { $('secureHint').style.display='block'; $('secureHint').innerHTML='ℹ️ Not secure ('+location.protocol+'). Live camera blocked — use the still-photo box, or host on HTTPS.'; }
 })();
 </script>
 </body>
