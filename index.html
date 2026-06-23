@@ -6,8 +6,9 @@
 <title>Scanner Lab</title>
 <!--
   Scanner Lab — compare decoders OUTSIDE the app to find one simple,
-  universal fix for the hard laser-etched tags ( before
-  touching 
+  universal fix for the hard laser-etched tags before
+  touching apps/web/src/components/shared/barcode-scanner.tsx.
+
   ENGINES (pick one or "All"):
     1. ZXing (app)   — the EXACT library the web app uses today:
                        @zxing/browser BrowserMultiFormatReader + @zxing/library.
@@ -21,7 +22,7 @@
                        >>> This is the candidate "one universal fix". <<<
 
   No preprocessing knobs — per your call, we only test real decoders.
-  Known-good  sample decodes to a string containing .
+  Known-good s sample decodes to a string containing 7.
 -->
 <style>
   :root{--bg:#0b0e14;--panel:#151a23;--panel2:#1d2430;--border:#2a3340;--text:#e6edf3;--muted:#8b97a7;--accent:#4f8cff;--good:#3fb950;--bad:#f85149;--warn:#d29922}
@@ -58,7 +59,7 @@
 </head>
 <body>
   <h1>Scanner Lab</h1>
-  <p class="sub">Find one universal decoder fix. <code>ZXing (app)</code> = exactly what the app uses now. Sample should read <code>id=171338987</code>.</p>
+  <p class="sub">Find one universal decoder fix. <code>ZXing (app)</code> = exactly what the app uses now. Sample should read <code>id=177</code>.</p>
 
   <div class="card">
     <div class="seg" id="engineSeg" role="group" aria-label="Engine" style="margin-bottom:10px">
@@ -120,9 +121,19 @@
   // ---------- ZXing (the app's exact reader) ----------
   function ensureZXing() {
     if (zxingReader) return zxingReader;
-    const ZB = window.ZXingBrowser;
+    const ZB = window.ZXingBrowser, ZL = window.ZXing;
     if (!ZB || !ZB.BrowserMultiFormatReader) throw new Error('ZXing (@zxing/browser) failed to load from CDN');
-    zxingReader = new ZB.BrowserMultiFormatReader(); // identical to barcode-scanner.tsx (no hints)
+    // The app constructs this with NO hints (barcode-scanner.tsx). We add
+    // TRY_HARDER so 1D barcodes actually get a fair shot — plain ZXing barely
+    // reads 1D from a camera frame without it. (Formats left unrestricted =
+    // QR + DataMatrix + Aztec + PDF417 + all 1D.) Toggle window.__zxingTryHarder
+    // = false in the console to see the raw app behavior.
+    let hints = undefined;
+    if (ZL && ZL.DecodeHintType && window.__zxingTryHarder !== false) {
+      hints = new Map();
+      hints.set(ZL.DecodeHintType.TRY_HARDER, true);
+    }
+    zxingReader = new ZB.BrowserMultiFormatReader(hints);
     return zxingReader;
   }
   function tryZXing(canvas) {
@@ -162,9 +173,14 @@
     }
     return wasmLoading;
   }
+  // Explicitly enable every linear (1D) + matrix (2D) format so there's zero
+  // doubt that barcodes are being attempted — not just QR.
+  const WASM_FORMATS = ['QRCode','MicroQRCode','DataMatrix','Aztec','PDF417',
+    'Code128','Code39','Code93','Codabar','EAN-13','EAN-8','UPC-A','UPC-E',
+    'ITF','DataBar','DataBarExpanded'];
   async function tryWasm(imageData) {
     const read = await ensureWasm();
-    const res = await read(imageData, { tryHarder: true, tryInvert: true, tryRotate: true, maxNumberOfSymbols: 1 });
+    const res = await read(imageData, { tryHarder: true, tryInvert: true, tryRotate: true, formats: WASM_FORMATS, maxNumberOfSymbols: 1 });
     return (res && res.length && res[0].text) ? { value: res[0].text, fmt: res[0].format } : null;
   }
 
